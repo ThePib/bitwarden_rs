@@ -18,6 +18,7 @@ pub fn routes() -> Vec<Route> {
         create_organization,
         delete_organization,
         post_delete_organization,
+        post_import_into_organization,
         leave_organization,
         get_user_collections,
         get_org_collections,
@@ -72,6 +73,29 @@ struct NewCollectionData {
     Name: String,
 }
 
+#[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
+struct OrganizationImportData {
+    Groups: Vec<OrganizationGroupImportData>,
+    Users: Vec<OrganizationUserImportData>,
+}
+
+#[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
+struct OrganizationGroupImportData {
+    Name: String,
+    ExternalId: String,
+    Users: Vec<String>,
+}
+
+#[derive(Deserialize, Debug)]
+#[allow(non_snake_case)]
+struct OrganizationUserImportData {
+    ExternalId: String,
+    Email: String,
+    Deleted: bool,
+}
+
 #[post("/organizations", data = "<data>")]
 fn create_organization(headers: Headers, data: JsonUpcase<OrgData>, conn: DbConn) -> JsonResult {
     let data: OrgData = data.into_inner().data;
@@ -120,6 +144,33 @@ fn post_delete_organization(
     conn: DbConn,
 ) -> EmptyResult {
     delete_organization(org_id, data, headers, conn)
+}
+
+#[post("/organizations/<org_id>/import", data = "<data>")]
+fn post_import_into_organization(
+    org_id: String,
+    data: JsonUpcase<OrganizationImportData>,
+    _headers: AdminHeaders,
+    conn: DbConn,
+) -> EmptyResult {
+    let data: OrganizationImportData = data.into_inner().data;
+
+    let org = match Organization::find_by_uuid(&org_id, &conn) {
+        Some(organization) => organization,
+        None => err!("Can't find organization details"),
+    };
+
+    for import_user_data in data.Users.iter() {
+        let user = match User::find_by_mail(&import_user_data.Email, &conn) {
+            Some(user) => user,
+            None => err!(format!("User with email {} does not exist", import_user_data.Email)),
+        };
+        let user_org = UserOrganization::new(user.uuid.clone(), org_id.clone());
+
+        user_org.save(&conn)?;
+    }
+
+    Ok(())
 }
 
 #[post("/organizations/<org_id>/leave")]
